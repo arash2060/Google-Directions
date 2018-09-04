@@ -13,7 +13,7 @@ waitlist = ['Wanna go get some press covfefe... and come back? Just kidding!',
             'A few more seconds... ...']
 print(random.choice(waitlist))
 from tkinter.ttk import *
-from pandas import ExcelFile, ExcelWriter, merge, to_numeric
+from pandas import ExcelFile, ExcelWriter, merge, to_numeric, DataFrame
 #import pandas as pd
 from datetime import datetime
 import time
@@ -22,6 +22,7 @@ from pandas.io.json import json_normalize
 import tkcalendar
 import tkinter.simpledialog as tkSimpleDialog
 import json
+import babel
 
 
 
@@ -391,6 +392,7 @@ result in 'New York City' assumed for all addresses.")
                         'Address1', 'NameAddress1', 'Generated_streetaddress1', 'Goog_ID']].copy()
         df_unique.drop_duplicates(subset=['Address1', 'NameAddress1', 'Address2', 'NameAddress2'], keep="first", inplace=True)
         df_unique.reset_index(inplace=True)
+        merge_set = ['Address1', 'NameAddress1', 'Address2', 'NameAddress2']
 
         obs = len(df_unique.index) * 2
         print('There are %s unique observations to process...' % (obs))
@@ -400,7 +402,7 @@ result in 'New York City' assumed for all addresses.")
         df_unique = df[['Address1', 'Generated_streetaddress1', 'Address2', 'Generated_streetaddress2', 'Goog_ID']].copy()
         df_unique.drop_duplicates(subset=['Address1', 'Address2'], keep="first", inplace=True)
         df_unique.reset_index(inplace=True)
-
+        merge_set = ['Address1', 'Address2']
         obs = len(df_unique.index)
         print('There are %s unique observations to process...' % (obs))
 
@@ -429,19 +431,32 @@ result in 'New York City' assumed for all addresses.")
                                          mode=tm_combo.get(),
                                          departure_time=dt_formatted)
                 count_query += 1
-                print(json.dumps(transit_result, indent=4))
+                # print(json.dumps(transit_result, indent=4))
                 status.set("Status: looking up observation %s of %s" % (count_query, obs))
-                temp_df0 = json_normalize(transit_result[0]['legs'])
-                temp_df0['Goog_ID'] = row['Goog_ID']
-                temp_df1 = json_normalize(transit_result[0]['legs'][0]['steps'])
-                temp_df1['Goog_ID'] = row['Goog_ID']
-                print(temp_df1)
+                # if Google doesn't find any routes, the api returns an empty list, which causes index errors.
+                try:
+                    temp_df0 = json_normalize(transit_result[0]['legs'])
+                    temp_df0['Goog_ID'] = row['Goog_ID']
+                    temp_df1 = json_normalize(transit_result[0]['legs'][0]['steps'])
+                    temp_df1['Goog_ID'] = row['Goog_ID']
+                except:
+                    print(row["%s1" % var],
+                          row["%s2" % var],
+                          tm_combo.get(),
+                          dt_formatted)
+                    temp_df0 = DataFrame(index=range(len(transit_result)), columns=['Goog_ID', 'dump_error'])
+                    temp_df1 = DataFrame(index=range(len(transit_result)), columns=['Goog_ID', 'dump_error'])
+                    temp_df0['dump_error'] = transit_result
+                    temp_df0['Goog_ID'] = row['Goog_ID']
+                    temp_df1['dump_error'] = transit_result
+                    temp_df1['Goog_ID'] = row['Goog_ID']
+                # print(temp_df1)
                 #temp_df0.merge(temp_df1, left_on='id', right_on='id', how='outer')
-                if index > 0:
+                try:
                     dfLegs = dfLegs.append(temp_df0, ignore_index=True)
                     dfSteps = dfSteps.append(temp_df1, ignore_index=True)
-                    #print('here:\n', dfLegs.head())
-                else:
+                    # print('here:\n', index, row['Goog_ID'])
+                except NameError:
                     dfLegs = temp_df0.copy()
                     dfSteps = temp_df1.copy()
                     #print('There:\n', dfLegs.head())
@@ -453,21 +468,27 @@ result in 'New York City' assumed for all addresses.")
                     print("Recovery File GOOGLE_recovery.xlsx Saved when index was %s at %s" % (index, datetime.now()))
                 # Make sure that we are getting the results of the correct query saved.
                 transit_result = None
+            else:
+                print('ERROR:',index, index <= len(df_unique.index), row['Generated_streetaddress1'],row['Generated_streetaddress2'] )
 
     # Save The Results
-    # Drop the temporary variables.
-    df.drop(['Generated_streetaddress1','Generated_streetaddress2'], axis=1, inplace=True)
-    df_unique.drop(['Address2', 'Generated_streetaddress2','Address1', 'Generated_streetaddress1'], axis=1, inplace=True)
-    try:
-        df_unique.drop(['NameAddress1', 'NameAddress2'], axis=1, inplace=True)
-    except:
-        None
-
     # Merge back unique addresses with geocodes with original df.
     results0 = merge(df_unique, dfLegs, on='Goog_ID', how='outer')
-    result = merge(df, results0, on='Goog_ID', how='outer')
+    result = merge(df, results0, on=merge_set, how='outer')
     # steps are saved separately
     result.drop(['index_x', 'steps'], axis=1, inplace=True)
+
+    # Drop the temporary variables.
+    try:
+        result.drop(['Generated_streetaddress1_x','Generated_streetaddress2_x'], axis=1, inplace=True)
+        result.drop(['Generated_streetaddress1_y','Generated_streetaddress2_y'], axis=1, inplace=True)
+    except:
+        None
+    try:
+        result.drop(['NameAddress1_x', 'NameAddress2_x'], axis=1, inplace=True)
+        result.drop(['NameAddress1_y', 'NameAddress2_y'], axis=1, inplace=True)
+    except:
+        None
     # # Update Google output fields with new values if they already existed on the file.
     # for col in ['Gformatted_address0', 'Glat0', 'Glon0', 'GPartial0', 'Gtypes0', 'Gformatted_address1',
     #             'Glat1', 'Glon1', 'GPartial1', 'Gtypes1', 'Borough0', 'Borough1', 'Gzip0', 'Gzip1',
@@ -574,7 +595,7 @@ if __name__ == '__main__':
     tm_combo['values'] = ['transit', 'driving', 'walking', 'cycling']
     tm_combo.current(0)
     lbl_time = Label(row, text="Date/Time:", width=15, anchor='w')
-    dep_time = Entry(row, width=18, state='disabled')
+    dep_time = Entry(row, width=18, state='enabled')
     getDate = Button(row, text="Choose Date ...", width=17, command=get_date)
     lbl_tm.pack(side=LEFT, padx=5, pady=5)
     tm_combo.pack(side=LEFT, padx=28, pady=5, expand=YES, fill=X)
